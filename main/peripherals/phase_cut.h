@@ -3,7 +3,10 @@
 
 #include <stdint.h>
 
+
 void phase_cut_init(void);
-void phase_cut_set_period(uint64_t usecs);
+void phase_cut_set_period(uint32_t usecs);
+void phase_cut_timer_enable(int enable);
+void phase_cut_set_percentage(unsigned int perc);
 
 #endif
