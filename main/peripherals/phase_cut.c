@@ -55,20 +55,6 @@ static void start_deactivate_triac_timer(void) {
 }
 
 static void start_activate_triac_timer(size_t usecs) {
-    /*timer_config_t config = {
-        .clk_src     = TIMER_SRC_CLK_APB,
-        .divider     = APB_CLK_FREQ / TIMER_RESOLUTION_HZ,
-        .counter_dir = TIMER_COUNT_UP,
-        .counter_en  = TIMER_PAUSE,
-        .alarm_en    = TIMER_ALARM_EN,
-        .auto_reload = false,
-    };
-    ESP_ERROR_CHECK(timer_init(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX, &config));
-    // Hook interrupt callback
-    ESP_ERROR_CHECK(timer_isr_callback_remove(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX));
-    ESP_ERROR_CHECK(timer_isr_callback_add(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX, timer_zerocross_callback, NULL, 0));
-    ESP_ERROR_CHECK(timer_enable_intr(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX));*/
-
     // For the timer counter to a initial value
     ESP_ERROR_CHECK(timer_set_counter_value(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX, 0));
     // Set alarm value and enable alarm interrupt
