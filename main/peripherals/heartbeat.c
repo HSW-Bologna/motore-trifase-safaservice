@@ -15,6 +15,7 @@ static TimerHandle_t timer = NULL;
  */
 static void heartbeat_timer(void *arg) {
     (void)arg;
+    (void)TAG;
     static int    blink   = 0;
     static size_t counter = 0;
 

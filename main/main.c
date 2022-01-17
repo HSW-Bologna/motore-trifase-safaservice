@@ -37,32 +37,20 @@ void app_main(void) {
     }
     const char *msg = "ciao seriale usb\n";
     fwrite(msg, 1, strlen(msg), f);*/
-    uint64_t period = 0;
-            
+    // uint64_t period = 0;
+
     ESP_LOGI(TAG, "Begin main loop");
     for (;;) {
         minion_manage();
-        /*ESP_LOGI(TAG, "setting period %llu", period);
-        phase_cut_set_period(period);
-        period = (period + 500) % 10000;
-        vTaskDelay(1000);
-        continue;*/
-        
-        // ESP_LOGI(TAG, "Hello world!");
 
-        /*char readmsg[8] = {0};
-        int  res        = fread(readmsg, 1, sizeof(readmsg), f);
-        if (res > 0) {
-            ESP_LOGI(TAG, "Letti %i: %s", res, readmsg);
-        }*/
-        //vTaskDelay(pdMS_TO_TICKS(100));
         if (controllo_digitale_get_signal_on()) {
             unsigned int speed = controllo_digitale_get_perc_speed();
-            ESP_LOGI(TAG, "VELOCITA' %i%%", speed);
+            ESP_LOGI(TAG, "VELOCITA' %i%% (%i)", speed, controllo_digitale_get_analog_speed());
             phase_cut_set_percentage(speed);
-        }
-        else {
+        } else {
             phase_cut_timer_enable(0);
         }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
