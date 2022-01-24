@@ -8,17 +8,6 @@
 #include <stdbool.h>
 #include <sys/_stdint.h>
 
-static void zcross_isr_handler(void *arg);
-static void add_counter(uint32_t *counters, uint32_t counter);
-
-static volatile uint32_t period = 0;
-#define NUM_COUNTERS 3
-static volatile uint32_t p1_counters[NUM_COUNTERS] = {0};
-static volatile size_t   p1_triac                  = 0;
-static int               full                      = 0;
-
-static const char *TAG = "Phase cut";
-
 
 #define TIMER_ZCROSS_GROUP  TIMER_GROUP_0
 #define TIMER_ZCROSS_IDX    TIMER_0
@@ -27,25 +16,41 @@ static const char *TAG = "Phase cut";
 #define TIMER_PERIOD        TIMER_USECS(100)
 #define PHASE_HALFPERIOD    TIMER_USECS(10000)
 
+#define MAX_PERIOD   9500UL
+#define MIN_PERIOD   1500UL
+#define NUM_COUNTERS 3
 
-#define MAX_PERIOD 9500UL
-#define MIN_PERIOD 500UL
+
+static void zcross_isr_handler(void *arg);
+static void add_counter(uint32_t *counters, uint32_t counter);
+
+static const uint16_t sine_percentage_linearization[100] = {
+    9999, 9361, 9095, 8890, 8716, 8563, 8423, 8294, 8173, 8058, 7950, 7846, 7746, 7650, 7556, 7466, 7378,
+    7292, 7208, 7126, 7046, 6967, 6889, 6813, 6738, 6664, 6591, 6519, 6447, 6377, 6307, 6238, 6169, 6101,
+    6034, 5967, 5900, 5834, 5768, 5703, 5638, 5573, 5508, 5444, 5380, 5315, 5252, 5188, 5124, 5060, 4996,
+    4933, 4869, 4805, 4741, 4677, 4613, 4549, 4485, 4420, 4355, 4290, 4225, 4159, 4093, 4026, 3959, 3892,
+    3824, 3755, 3686, 3616, 3546, 3474, 3402, 3329, 3255, 3180, 3104, 3026, 2947, 2867, 2785, 2701, 2615,
+    2527, 2437, 2343, 2247, 2147, 2043, 1935, 1820, 1699, 1570, 1430, 1276, 1103, 898,  632,
+};
+
+
+static volatile uint32_t period                    = 0;
+static volatile uint32_t p1_counters[NUM_COUNTERS] = {0};
+static volatile uint32_t p2_counters[NUM_COUNTERS] = {0};
+static volatile uint32_t p3_counters[NUM_COUNTERS] = {0};
+static int               full                      = 0;
+
+static const char *TAG = "Phase cut";
 
 
 static bool IRAM_ATTR timer_phasecut_callback(void *args) {
     (void)args;
-    // p1_counter-=100;
-    // p2_counter-=100;
-    // p3_counter=-100;
 
-    int i;
+    gpio_set_level(IO_L1, 0);
+    gpio_set_level(IO_L2, 0);
+    gpio_set_level(IO_L3, 0);
 
-    if (p1_triac) {
-        gpio_set_level(IO_L1, 0);
-        p1_triac = 0;
-    }
-
-    for (i = 0; i < NUM_COUNTERS; i++) {
+    for (size_t i = 0; i < NUM_COUNTERS; i++) {
         if (p1_counters[i] > 0) {
             if (p1_counters[i] > 100) {
                 p1_counters[i] -= 100;
@@ -54,20 +59,40 @@ static bool IRAM_ATTR timer_phasecut_callback(void *args) {
             }
             if (p1_counters[i] == 0) {
                 gpio_set_level(IO_L1, 1);
-                p1_triac = 1;
+            }
+        }
+
+        if (p2_counters[i] > 0) {
+            if (p2_counters[i] > 100) {
+                p2_counters[i] -= 100;
+            } else {
+                p2_counters[i] = 0;
+            }
+            if (p2_counters[i] == 0) {
+                gpio_set_level(IO_L2, 1);
+            }
+        }
+
+        if (p3_counters[i] > 0) {
+            if (p3_counters[i] > 100) {
+                p3_counters[i] -= 100;
+            } else {
+                p3_counters[i] = 0;
+            }
+            if (p3_counters[i] == 0) {
+                gpio_set_level(IO_L3, 1);
             }
         }
     }
 
-    gpio_set_level(IO_L2, 1);
-    gpio_set_level(IO_L3, 1);
-
     return 0;
 }
 
+
 void phase_cut_set_period(uint32_t usecs) {
-    period = usecs;
+    period = TIMER_USECS(usecs);
 }
+
 
 void phase_cut_timer_enable(int enable) {
     if (enable) {
@@ -133,9 +158,31 @@ void phase_cut_init(void) {
 }
 
 
+void phase_cut_stop(void) {
+    full = 0;
+    phase_cut_timer_enable(0);
+}
 
 
 void phase_cut_set_percentage(unsigned int perc) {
+    if (perc >= 100) {
+        perc = 99;
+    }
+    uint16_t converted_period = sine_percentage_linearization[perc];
+
+    if (converted_period < MIN_PERIOD) {
+        full = 1;
+        phase_cut_timer_enable(0);
+    } else if (converted_period > MAX_PERIOD) {
+        full = 0;
+        phase_cut_timer_enable(0);
+    } else {
+        full = 0;
+        phase_cut_timer_enable(1);
+        phase_cut_set_period(converted_period);
+    }
+
+#if 0
     if (perc >= 100) {
         perc = 100;
         full = 1;
@@ -150,6 +197,7 @@ void phase_cut_set_percentage(unsigned int perc) {
         const unsigned int range = (MAX_PERIOD - MIN_PERIOD) / 100;
         phase_cut_set_period(MIN_PERIOD + perc * range);
     }
+#endif
 }
 
 
@@ -164,7 +212,9 @@ static void IRAM_ATTR zcross_isr_handler(void *arg) {
         gpio_set_level(IO_L3, 0);
     }
 
-    add_counter(p1_counters, period);
+    add_counter((uint32_t *)p1_counters, period);
+    add_counter((uint32_t *)p2_counters, ((PHASE_HALFPERIOD * 2) / 3) + period);
+    add_counter((uint32_t *)p3_counters, ((PHASE_HALFPERIOD * 4) / 3) + period);
     // p2_counter=(PHASE_HALFPERIOD*2)/3 + period;
     // p3_counter=(PHASE_HALFPERIOD*4)/3 + period;
 }

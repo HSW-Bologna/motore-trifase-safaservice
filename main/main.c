@@ -48,7 +48,7 @@ void app_main(void) {
             ESP_LOGI(TAG, "VELOCITA' %i%% (%i)", speed, controllo_digitale_get_analog_speed());
             phase_cut_set_percentage(speed);
         } else {
-            phase_cut_timer_enable(0);
+            phase_cut_stop();
         }
 
         vTaskDelay(pdMS_TO_TICKS(100));

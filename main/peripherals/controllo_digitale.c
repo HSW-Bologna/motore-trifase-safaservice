@@ -46,7 +46,6 @@ static void controllo_digitale_read_signal_on(void *arg) {     // da fare period
 static void controllo_digitale_read_analog_speed(void *arg) {     // da fare periodicamente
     (void)arg;
     uint16_t speed = adc1_get_raw(ANALOG_SPEED);
-    ESP_LOGI(TAG, "%i", speed);
     speeds[avarage_index] = speed;
     if (avarage_index == NUM_READINGS - 1) {
         first_loop = 0;
