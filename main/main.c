@@ -45,8 +45,8 @@ void app_main(void) {
 
         if (controllo_digitale_get_signal_on()) {
             unsigned int speed = controllo_digitale_get_perc_speed();
-            ESP_LOGI(TAG, "VELOCITA' %i%% (%i)", speed, controllo_digitale_get_analog_speed());
             phase_cut_set_percentage(speed);
+            ESP_LOGI(TAG, "VELOCITA' %i%% (%i)", speed, phase_cut_get_period());
         } else {
             phase_cut_stop();
         }
