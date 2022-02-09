@@ -42,6 +42,7 @@ static volatile uint32_t p1_counters[NUM_COUNTERS] = {0};
 static volatile uint32_t p2_counters[NUM_COUNTERS] = {0};
 static volatile uint32_t p3_counters[NUM_COUNTERS] = {0};
 static int               full                      = 0;
+static int               turn_off_counter[3]       = {0};
 
 static const char *TAG = "Phase cut";
 
@@ -51,9 +52,25 @@ static bool IRAM_ATTR timer_phasecut_callback(void *args) {
 
     // current_phase_halfperiod += 100;
 
-    gpio_set_level(IO_L1, 0);
-    gpio_set_level(IO_L2, 0);
-    gpio_set_level(IO_L3, 0);
+    if (turn_off_counter[0] > 0) {
+        turn_off_counter[0]--;
+    }
+    if (turn_off_counter[1] > 0) {
+        turn_off_counter[1]--;
+    }
+    if (turn_off_counter[2] > 0) {
+        turn_off_counter[2]--;
+    }
+
+    if (turn_off_counter[0] == 0 && !full) {
+        gpio_set_level(IO_L1, 0);
+    }
+    if (turn_off_counter[1] == 0 && !full) {
+        gpio_set_level(IO_L2, 0);
+    }
+    if (turn_off_counter[2] == 0 && !full) {
+        gpio_set_level(IO_L3, 0);
+    }
 
     for (size_t i = 0; i < NUM_COUNTERS; i++) {
         if (p1_counters[i] > 0) {
@@ -64,6 +81,7 @@ static bool IRAM_ATTR timer_phasecut_callback(void *args) {
             }
             if (p1_counters[i] == 0) {
                 gpio_set_level(IO_L1, 1);
+                turn_off_counter[0] = 2;
             }
         }
 
@@ -75,6 +93,7 @@ static bool IRAM_ATTR timer_phasecut_callback(void *args) {
             }
             if (p2_counters[i] == 0) {
                 gpio_set_level(IO_L2, 1);
+                turn_off_counter[1] = 2;
             }
         }
 
@@ -86,6 +105,7 @@ static bool IRAM_ATTR timer_phasecut_callback(void *args) {
             }
             if (p3_counters[i] == 0) {
                 gpio_set_level(IO_L3, 1);
+                turn_off_counter[2] = 2;
             }
         }
     }
@@ -217,9 +237,9 @@ static void IRAM_ATTR zcross_isr_handler(void *arg) {
         gpio_set_level(IO_L2, 1);
         gpio_set_level(IO_L3, 1);
     } else {
-        gpio_set_level(IO_L1, 0);
-        gpio_set_level(IO_L3, 0);
-        gpio_set_level(IO_L3, 0);
+        // gpio_set_level(IO_L1, 0);
+        // gpio_set_level(IO_L2, 0);
+        // gpio_set_level(IO_L3, 0);
     }
 
     add_counter((uint32_t *)p1_counters, period);
