@@ -9,12 +9,13 @@
 #include <sys/_stdint.h>
 
 
-#define TIMER_ZCROSS_GROUP  TIMER_GROUP_0
-#define TIMER_ZCROSS_IDX    TIMER_0
-#define TIMER_RESOLUTION_HZ 1000000     // 1MHz resolution
-#define TIMER_USECS(x)      (x * (TIMER_RESOLUTION_HZ / 1000000))
-#define INTERRUPT_PERIOD    TIMER_USECS(100)
-#define PHASE_HALFPERIOD    TIMER_USECS(10000)
+#define TIMER_ZCROSS_GROUP      TIMER_GROUP_0
+#define TIMER_ZCROSS_IDX        TIMER_0
+#define TIMER_RESOLUTION_HZ     1000000     // 1MHz resolution
+#define TIMER_USECS(x)          (x * (TIMER_RESOLUTION_HZ / 1000000))
+#define INTERRUPT_PERIOD_USECS  100
+#define PHASE_HALFPERIOD        TIMER_USECS(10000)
+#define PERIOD_CORRECTION_USECS 50
 
 #define MAX_PERIOD   9500UL
 #define MIN_PERIOD   4000UL     // 1500UL
@@ -34,9 +35,8 @@ static const uint16_t sine_percentage_linearization[100] = {
 };
 
 
-// static const uint
-// static volatile uint32_t phase_halfperiod          = PHASE_HALFPERIOD;
-// static volatile uint32_t current_phase_halfperiod  = 0;
+static volatile uint32_t phase_halfperiod          = PHASE_HALFPERIOD;
+volatile uint32_t        current_phase_halfperiod  = 0;
 static volatile uint32_t period                    = 0;
 static volatile uint32_t p1_counters[NUM_COUNTERS] = {0};
 static volatile uint32_t p2_counters[NUM_COUNTERS] = {0};
@@ -50,7 +50,7 @@ static const char *TAG = "Phase cut";
 static bool IRAM_ATTR timer_phasecut_callback(void *args) {
     (void)args;
 
-    // current_phase_halfperiod += 100;
+    current_phase_halfperiod += INTERRUPT_PERIOD_USECS;
 
     if (turn_off_counter[0] > 0) {
         turn_off_counter[0]--;
@@ -151,7 +151,7 @@ void phase_cut_init(void) {
 
     // For the timer counter to a initial value
     ESP_ERROR_CHECK(timer_set_counter_value(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX, 0));
-    ESP_ERROR_CHECK(timer_set_alarm_value(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX, INTERRUPT_PERIOD));
+    ESP_ERROR_CHECK(timer_set_alarm_value(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX, TIMER_USECS(INTERRUPT_PERIOD_USECS)));
     ESP_ERROR_CHECK(timer_set_alarm(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX, 1));
 
     ESP_ERROR_CHECK(timer_start(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX));
@@ -242,11 +242,19 @@ static void IRAM_ATTR zcross_isr_handler(void *arg) {
         // gpio_set_level(IO_L3, 0);
     }
 
+    if (current_phase_halfperiod > phase_halfperiod) {
+        phase_halfperiod += PERIOD_CORRECTION_USECS;
+    } else if (current_phase_halfperiod < phase_halfperiod) {
+        phase_halfperiod -= PERIOD_CORRECTION_USECS;
+    }
+    current_phase_halfperiod = 0;
+    phase_halfperiod         = PHASE_HALFPERIOD;
+
     add_counter((uint32_t *)p1_counters, period);
-    add_counter((uint32_t *)p2_counters, ((PHASE_HALFPERIOD * 2) / 3) + period);
-    add_counter((uint32_t *)p3_counters, ((PHASE_HALFPERIOD * 4) / 3) + period);
-    // p2_counter=(PHASE_HALFPERIOD*2)/3 + period;
-    // p3_counter=(PHASE_HALFPERIOD*4)/3 + period;
+    // add_counter((uint32_t *)p2_counters, ((PHASE_HALFPERIOD * 2) / 3) + period);
+    // add_counter((uint32_t *)p3_counters, ((PHASE_HALFPERIOD * 4) / 3) + period);
+    add_counter((uint32_t *)p2_counters, ((phase_halfperiod * 2) / 3) + period);
+    add_counter((uint32_t *)p3_counters, ((phase_halfperiod * 4) / 3) + period);
 }
 
 static void add_counter(uint32_t *counters, uint32_t counter) {
