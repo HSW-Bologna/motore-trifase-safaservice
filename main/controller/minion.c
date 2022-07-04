@@ -1,6 +1,5 @@
 #include "minion.h"
 #include "../components/liblightmodbus-esp/src/esp.config.h"
-#include "driver/uart.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -15,78 +14,103 @@
 #include <stdlib.h>
 #include "peripherals/phase_cut.h"
 #include "peripherals/controllo_digitale.h"
+#include "peripherals/rs485.h"
+#include "easyconnect.h"
+#include "motor.h"
+#include "model/model.h"
 
-typedef struct {
-    uint16_t speed_perc;
-    uint16_t speed_on;
-} minion_context_t;
 
-#define MODBUS_TIMEOUT          10
-#define MB_PORTNUM              1
-#define SLAVE_ADDR              1
-#define SERIAL_NUMBER           2
-#define MODEL_NUMBER            0
-#define REG_COUNT               3
+#define REG_COUNT 6
 
-// Timeout threshold for UART = number of symbols (~10 tics) with unchanged
-// state on receive pin
-#define ECHO_READ_TOUT (3)     // 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
+#define HOLDING_REGISTER_SPEED_STEP 4
 
-static const char *     TAG = "Minion";
-static minion_context_t context;
-ModbusSlave             slave;
+#define COIL_MOTOR_STATE 0
 
-ModbusError myRegisterCallback(const ModbusSlave *status, const ModbusRegisterCallbackArgs *args,
-                               ModbusRegisterCallbackResult *result);
 
-ModbusError                  myExceptionCallback(const ModbusSlave *slave, uint8_t function, ModbusExceptionCode code);
+static ModbusError           register_callback(const ModbusSlave *status, const ModbusRegisterCallbackArgs *args,
+                                               ModbusRegisterCallbackResult *result);
+static ModbusError           exception_callback(const ModbusSlave *minion, uint8_t function, ModbusExceptionCode code);
+static LIGHTMODBUS_RET_ERROR initialization_function(ModbusSlave *minion, uint8_t function, const uint8_t *requestPDU,
+                                                     uint8_t requestLength);
 
-void minion_init(void) {
+
+static const ModbusSlaveFunctionHandler custom_functions[] = {
+#if defined(LIGHTMODBUS_F01S) || defined(LIGHTMODBUS_SLAVE_FULL)
+    {1, modbusParseRequest01020304},
+#endif
+#if defined(LIGHTMODBUS_F02S) || defined(LIGHTMODBUS_SLAVE_FULL)
+    {2, modbusParseRequest01020304},
+#endif
+#if defined(LIGHTMODBUS_F03S) || defined(LIGHTMODBUS_SLAVE_FULL)
+    {3, modbusParseRequest01020304},
+#endif
+#if defined(LIGHTMODBUS_F04S) || defined(LIGHTMODBUS_SLAVE_FULL)
+    {4, modbusParseRequest01020304},
+#endif
+#if defined(LIGHTMODBUS_F05S) || defined(LIGHTMODBUS_SLAVE_FULL)
+    {5, modbusParseRequest0506},
+#endif
+#if defined(LIGHTMODBUS_F06S) || defined(LIGHTMODBUS_SLAVE_FULL)
+    {6, modbusParseRequest0506},
+#endif
+#if defined(LIGHTMODBUS_F15S) || defined(LIGHTMODBUS_SLAVE_FULL)
+    {15, modbusParseRequest1516},
+#endif
+#if defined(LIGHTMODBUS_F16S) || defined(LIGHTMODBUS_SLAVE_FULL)
+    {16, modbusParseRequest1516},
+#endif
+#if defined(LIGHTMODBUS_F22S) || defined(LIGHTMODBUS_SLAVE_FULL)
+    {22, modbusParseRequest22},
+#endif
+
+    {EASYCONNECT_FUNCTION_CODE_CONFIG_ADDRESS, easyconnect_set_address_function},
+    {EASYCONNECT_FUNCTION_CODE_RANDOM_SERIAL_NUMBER, easyconnect_send_address_function},
+    {EASYCONNECT_FUNCTION_CODE_NETWORK_INIZIALIZATION, initialization_function},
+    {EASYCONNECT_FUNCTION_CODE_SET_CLASS_OUTPUT, easyconnect_set_class_output},
+
+    // Guard - prevents 0 array size
+    {0, NULL},
+};
+
+static const char *TAG = "Minion";
+static ModbusSlave minion;
+
+
+void minion_init(easyconnect_interface_t *context) {
+    ESP_LOGI(TAG, "Minion address %i", context->get_address(context->arg));
+
     ModbusErrorInfo err;
-    err = modbusSlaveInit(&slave,
-                          myRegisterCallback,         // Callback for register operations
-                          myExceptionCallback,        // Callback for handling slave exceptions (optional)
-                          modbusDefaultAllocator,     // Memory allocator for allocating responses
-                        modbusSlaveDefaultFunctions,     // Set of supported functions
-                        modbusSlaveDefaultFunctionCount  // Number of supported functions
-    );
+    err =
+        modbusSlaveInit(&minion,
+                        register_callback,          // Callback for register operations
+                        exception_callback,         // Callback for handling minion exceptions (optional)
+                        modbusDefaultAllocator,     // Memory allocator for allocating responses
+                        custom_functions,           // Set of supported functions
+                        sizeof(custom_functions) / sizeof(custom_functions[0]) - 1     // Number of supported functions
+        );
 
     // Check for errors
     assert(modbusIsOk(err) && "modbusSlaveInit() failed");
-
-    modbusSlaveSetUserPointer(&slave, &context);
-
-    uart_config_t uart_config = {
-        .baud_rate           = 115200,
-        .data_bits           = UART_DATA_8_BITS,
-        .parity              = UART_PARITY_DISABLE,
-        .stop_bits           = UART_STOP_BITS_1,
-        .flow_ctrl           = UART_HW_FLOWCTRL_DISABLE,
-        .rx_flow_ctrl_thresh = 122,
-    };
-
-    // Configure UART parameters
-    ESP_ERROR_CHECK(uart_param_config(SLAVE_ADDR, &uart_config));
-
-    uart_set_pin(MB_PORTNUM, MB_UART_TXD, MB_UART_RXD, MB_DERE, -1);
-    ESP_ERROR_CHECK(uart_driver_install(MB_PORTNUM, 512, 512, 10, NULL, 0));
-    ESP_ERROR_CHECK(uart_set_mode(MB_PORTNUM, UART_MODE_RS485_HALF_DUPLEX));
-    ESP_ERROR_CHECK(uart_set_rx_timeout(MB_PORTNUM, ECHO_READ_TOUT));
+    modbusSlaveSetUserPointer(&minion, context);
 }
+
 
 void minion_manage(void) {
     uint8_t buffer[256] = {0};
-    int     len         = uart_read_bytes(MB_PORTNUM, buffer, 256, pdMS_TO_TICKS(MODBUS_TIMEOUT));
+    int     len         = rs485_read(buffer, sizeof(buffer));
+
+    easyconnect_interface_t *context = modbusSlaveGetUserPointer(&minion);
+
     if (len > 0) {
         ModbusErrorInfo err;
-        err = modbusParseRequestRTU(&slave,SLAVE_ADDR, buffer, len);
+        err = modbusParseRequestRTU(&minion, context->get_address(context->arg), buffer, len);
 
         if (modbusIsOk(err)) {
-            size_t rlen = modbusSlaveGetResponseLength(&slave);
+            size_t rlen = modbusSlaveGetResponseLength(&minion);
             if (rlen > 0) {
-                uart_write_bytes(MB_PORTNUM, modbusSlaveGetResponse(&slave), rlen);
+                rs485_write((uint8_t *)modbusSlaveGetResponse(&minion), rlen);
             } else {
-                ESP_LOGI(TAG, "Empty response");
+                ESP_LOGD(TAG, "Empty response");
             }
         } else if (err.error != MODBUS_ERROR_ADDRESS) {
             ESP_LOGW(TAG, "Invalid request with source %i and error %i", err.source, err.error);
@@ -96,31 +120,101 @@ void minion_manage(void) {
 }
 
 
-ModbusError myRegisterCallback(const ModbusSlave *status, const ModbusRegisterCallbackArgs *args,
-                               ModbusRegisterCallbackResult *result) {
+static ModbusError register_callback(const ModbusSlave *status, const ModbusRegisterCallbackArgs *args,
+                                     ModbusRegisterCallbackResult *result) {
 
-    minion_context_t *ctx = modbusSlaveGetUserPointer(status);
+    easyconnect_interface_t *context = modbusSlaveGetUserPointer(status);
+    result->exceptionCode            = MODBUS_EXCEP_NONE;
 
-    printf("%i %i %i %i\n", args->query, args->type, args->index, args->value);
+    ESP_LOGD(TAG, "%i %i %i %i\n", args->query, args->type, args->index, args->value);
     switch (args->query) {
         // R/W access check
         case MODBUS_REGQ_R_CHECK:
-        case MODBUS_REGQ_W_CHECK:
-            // If result->exceptionCode of a read/write access query is not
-            // MODBUS_EXCEP_NONE, an exception is reported by the slave. If
-            // result->exceptionCode is not set, the behavior is undefined.
             if (args->type == MODBUS_INPUT_REGISTER) {
                 result->exceptionCode = MODBUS_EXCEP_ILLEGAL_FUNCTION;
             }
             result->exceptionCode = args->index < REG_COUNT ? MODBUS_EXCEP_NONE : MODBUS_EXCEP_ILLEGAL_ADDRESS;
             break;
 
+        case MODBUS_REGQ_W_CHECK: {
+            if (args->type == MODBUS_INPUT_REGISTER) {
+                result->exceptionCode = MODBUS_EXCEP_ILLEGAL_FUNCTION;
+                break;
+            }
+
+            switch (args->type) {
+                case MODBUS_HOLDING_REGISTER: {
+                    if (args->index >= REG_COUNT) {
+                        result->exceptionCode = MODBUS_EXCEP_ILLEGAL_ADDRESS;
+                        break;
+                    }
+
+                    switch (args->index) {
+                        case EASYCONNECT_HOLDING_REGISTER_ADDRESS:
+                            if (args->value == 0 || args->value > 255) {
+                                result->exceptionCode = MODBUS_EXCEP_ILLEGAL_VALUE;
+                            }
+                            break;
+
+                        case EASYCONNECT_HOLDING_REGISTER_CLASS: {
+                            uint8_t mode = (args->value & 0xFF00) >> 8;
+                            if (mode != DEVICE_MODE_FAN) {
+                                result->exceptionCode = MODBUS_EXCEP_ILLEGAL_VALUE;
+                            }
+                            break;
+                        }
+
+                        case HOLDING_REGISTER_SPEED_STEP:
+                            if (args->value >= NUM_SPEED_STEPS) {
+                                result->exceptionCode = MODBUS_EXCEP_ILLEGAL_VALUE;
+                            }
+                            break;
+
+
+                        default:
+                            break;
+                    }
+                    break;
+                }
+
+                case MODBUS_COIL:
+                    if (args->index >= 1) {
+                        result->exceptionCode = MODBUS_EXCEP_ILLEGAL_ADDRESS;
+                    }
+                    break;
+
+                default:
+                    result->exceptionCode = MODBUS_EXCEP_ILLEGAL_FUNCTION;
+                    break;
+            }
+            break;
+        }
+
         // Read register
         case MODBUS_REGQ_R:
             switch (args->type) {
                 case MODBUS_HOLDING_REGISTER: {
-                    uint16_t registers[] = {ctx->speed_perc, ctx->speed_on};
-                    result->value        = registers[args->index];
+                    switch (args->index) {
+                        case EASYCONNECT_HOLDING_REGISTER_ADDRESS:
+                            result->value = context->get_address(context->arg);
+                            break;
+
+                        case EASYCONNECT_HOLDING_REGISTER_CLASS:
+                            result->value = context->get_class(context->arg);
+                            break;
+
+                        case EASYCONNECT_HOLDING_REGISTER_SERIAL_NUMBER:
+                            result->value = context->get_serial_number(context->arg);
+                            break;
+
+                        case EASYCONNECT_HOLDING_REGISTER_ALARM:
+                            result->value = 0;
+                            break;
+
+                        case HOLDING_REGISTER_SPEED_STEP:
+                            result->value = model_get_speed_step(context->arg);
+                            break;
+                    }
                     break;
                 }
                 case MODBUS_INPUT_REGISTER:
@@ -137,14 +231,50 @@ ModbusError myRegisterCallback(const ModbusSlave *status, const ModbusRegisterCa
         case MODBUS_REGQ_W:
             switch (args->type) {
                 case MODBUS_HOLDING_REGISTER: {
-                    uint16_t *registers[]   = {&ctx->speed_perc, &ctx->speed_on};
-                    *registers[args->index] = args->value;
+                    switch (args->index) {
+                        case EASYCONNECT_HOLDING_REGISTER_ADDRESS:
+                            context->save_address(context->arg, args->value);
+                            break;
+
+                        case EASYCONNECT_HOLDING_REGISTER_SERIAL_NUMBER:
+                            context->save_serial_number(context->arg, args->value);
+                            break;
+
+                        case EASYCONNECT_HOLDING_REGISTER_CLASS: {
+                            uint8_t mode = (args->value & 0xFF00) >> 8;
+                            if (mode == DEVICE_MODE_FAN) {
+                                context->save_class(context->arg, args->value);
+                            }
+                            break;
+                        }
+
+                        case HOLDING_REGISTER_SPEED_STEP:
+                            ESP_LOGI(TAG, "Speed %i", args->value);
+                            if (args->value < NUM_SPEED_STEPS) {
+                                model_set_speed_step(context->arg, args->value);
+                                if (motor_get_state()) {
+                                    motor_set_speed(model_get_current_speed(context->arg));
+                                }
+                            }
+                            break;
+
+                        case EASYCONNECT_HOLDING_REGISTER_ALARM:
+                            break;
+                    }
                     break;
                 }
+
                 case MODBUS_COIL:
+                    switch (args->index) {
+                        case COIL_MOTOR_STATE:
+                            context->set_output(context->arg, args->value);
+                            break;
+                    }
                     break;
+
                 case MODBUS_INPUT_REGISTER:
                     break;
+
                 default:
                     break;
             }
@@ -155,9 +285,18 @@ ModbusError myRegisterCallback(const ModbusSlave *status, const ModbusRegisterCa
     return MODBUS_OK;
 }
 
-ModbusError myExceptionCallback(const ModbusSlave *slave, uint8_t function, ModbusExceptionCode code) {
-    printf("Slave reports an exception %d (function %d)\n", code, function);
 
+static ModbusError exception_callback(const ModbusSlave *minion, uint8_t function, ModbusExceptionCode code) {
+    ESP_LOGW(TAG, "Minion reports an exception %d (function %d)", code, function);
     // Always return MODBUS_OK
     return MODBUS_OK;
+}
+
+
+static LIGHTMODBUS_RET_ERROR initialization_function(ModbusSlave *minion, uint8_t function, const uint8_t *requestPDU,
+                                                     uint8_t requestLength) {
+    easyconnect_interface_t *context = modbusSlaveGetUserPointer(minion);
+    model_set_motor_control_override(context->arg, 1);
+    phase_cut_stop();
+    return MODBUS_NO_ERROR();
 }

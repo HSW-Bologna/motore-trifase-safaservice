@@ -9,16 +9,17 @@
 #include <sys/_stdint.h>
 
 
-#define TIMER_ZCROSS_GROUP      TIMER_GROUP_0
-#define TIMER_ZCROSS_IDX        TIMER_0
-#define TIMER_RESOLUTION_HZ     1000000     // 1MHz resolution
-#define TIMER_USECS(x)          (x * (TIMER_RESOLUTION_HZ / 1000000))
+#define TIMER_ZCROSS_GROUP  TIMER_GROUP_0
+#define TIMER_ZCROSS_IDX    TIMER_0
+#define TIMER_RESOLUTION_HZ 1000000     // 1MHz resolution
+#define TIMER_USECS(x)      (x * (TIMER_RESOLUTION_HZ / 1000000))
+
 #define INTERRUPT_PERIOD_USECS  100
 #define PHASE_HALFPERIOD        TIMER_USECS(10000)
-#define PERIOD_CORRECTION_USECS 50
+#define PERIOD_CORRECTION_USECS (INTERRUPT_PERIOD_USECS / 10)
 
 #define MAX_PERIOD   9500UL
-#define MIN_PERIOD   4000UL     // 1500UL
+#define MIN_PERIOD   1500UL
 #define NUM_COUNTERS 3
 
 
@@ -35,13 +36,16 @@ static const uint16_t sine_percentage_linearization[100] = {
 };
 
 
+volatile uint32_t calculated_phase_halfperiod = PHASE_HALFPERIOD;
+volatile uint32_t last_phase_halfperiod       = 0;
+
 static volatile uint32_t phase_halfperiod          = PHASE_HALFPERIOD;
-volatile uint32_t        current_phase_halfperiod  = 0;
+static volatile uint32_t current_phase_halfperiod  = 0;
 static volatile uint32_t period                    = 0;
 static volatile uint32_t p1_counters[NUM_COUNTERS] = {0};
 static volatile uint32_t p2_counters[NUM_COUNTERS] = {0};
 static volatile uint32_t p3_counters[NUM_COUNTERS] = {0};
-static int               full                      = 0;
+static uint8_t           full                      = 0;
 static int               turn_off_counter[3]       = {0};
 
 static const char *TAG = "Phase cut";
@@ -74,8 +78,8 @@ static bool IRAM_ATTR timer_phasecut_callback(void *args) {
 
     for (size_t i = 0; i < NUM_COUNTERS; i++) {
         if (p1_counters[i] > 0) {
-            if (p1_counters[i] > 100) {
-                p1_counters[i] -= 100;
+            if (p1_counters[i] > INTERRUPT_PERIOD_USECS) {
+                p1_counters[i] -= INTERRUPT_PERIOD_USECS;
             } else {
                 p1_counters[i] = 0;
             }
@@ -86,8 +90,8 @@ static bool IRAM_ATTR timer_phasecut_callback(void *args) {
         }
 
         if (p2_counters[i] > 0) {
-            if (p2_counters[i] > 100) {
-                p2_counters[i] -= 100;
+            if (p2_counters[i] > INTERRUPT_PERIOD_USECS) {
+                p2_counters[i] -= INTERRUPT_PERIOD_USECS;
             } else {
                 p2_counters[i] = 0;
             }
@@ -98,8 +102,8 @@ static bool IRAM_ATTR timer_phasecut_callback(void *args) {
         }
 
         if (p3_counters[i] > 0) {
-            if (p3_counters[i] > 100) {
-                p3_counters[i] -= 100;
+            if (p3_counters[i] > INTERRUPT_PERIOD_USECS) {
+                p3_counters[i] -= INTERRUPT_PERIOD_USECS;
             } else {
                 p3_counters[i] = 0;
             }
@@ -137,6 +141,8 @@ void phase_cut_timer_enable(int enable) {
 
 
 void phase_cut_init(void) {
+    (void)TAG;
+
     timer_config_t config = {
         .clk_src     = TIMER_SRC_CLK_APB,
         .divider     = APB_CLK_FREQ / TIMER_RESOLUTION_HZ,
@@ -155,7 +161,6 @@ void phase_cut_init(void) {
     ESP_ERROR_CHECK(timer_set_alarm(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX, 1));
 
     ESP_ERROR_CHECK(timer_start(TIMER_ZCROSS_GROUP, TIMER_ZCROSS_IDX));
-
 
     gpio_config_t io_conf_input = {
         // interrupt of falling edge
@@ -180,11 +185,15 @@ void phase_cut_init(void) {
         .pull_down_en = 0,
     };
     gpio_config(&io_conf_output);
+    gpio_set_level(IO_L1, 0);
+    gpio_set_level(IO_L2, 0);
+    gpio_set_level(IO_L3, 0);
 
     // install gpio isr service
     gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
     // hook isr handler for specific gpio pin
     gpio_isr_handler_add(IO_ZCROS, zcross_isr_handler, NULL);
+    phase_cut_stop();
 }
 
 
@@ -206,28 +215,14 @@ void phase_cut_set_percentage(unsigned int perc) {
     } else if (converted_period > MAX_PERIOD) {
         full = 0;
         phase_cut_timer_enable(0);
+    gpio_set_level(IO_L1, 0);
+    gpio_set_level(IO_L2, 0);
+    gpio_set_level(IO_L3, 0);
     } else {
         full = 0;
         phase_cut_timer_enable(1);
         phase_cut_set_period(converted_period);
     }
-
-#if 0
-    if (perc >= 100) {
-        perc = 100;
-        full = 1;
-        phase_cut_timer_enable(0);
-    } else if (perc == 0) {
-        full = 0;
-        phase_cut_timer_enable(0);
-    } else {
-        phase_cut_timer_enable(1);
-        full                     = 0;
-        perc                     = 100 - perc;
-        const unsigned int range = (MAX_PERIOD - MIN_PERIOD) / 100;
-        phase_cut_set_period(MIN_PERIOD + perc * range);
-    }
-#endif
 }
 
 
@@ -236,16 +231,13 @@ static void IRAM_ATTR zcross_isr_handler(void *arg) {
         gpio_set_level(IO_L1, 1);
         gpio_set_level(IO_L2, 1);
         gpio_set_level(IO_L3, 1);
-    } else {
-        // gpio_set_level(IO_L1, 0);
-        // gpio_set_level(IO_L2, 0);
-        // gpio_set_level(IO_L3, 0);
     }
 
-    if (current_phase_halfperiod > phase_halfperiod) {
-        phase_halfperiod += PERIOD_CORRECTION_USECS;
-    } else if (current_phase_halfperiod < phase_halfperiod) {
-        phase_halfperiod -= PERIOD_CORRECTION_USECS;
+    last_phase_halfperiod = current_phase_halfperiod;
+    if (current_phase_halfperiod > calculated_phase_halfperiod) {
+        calculated_phase_halfperiod += PERIOD_CORRECTION_USECS;
+    } else if (current_phase_halfperiod < calculated_phase_halfperiod) {
+        calculated_phase_halfperiod -= PERIOD_CORRECTION_USECS;
     }
     current_phase_halfperiod = 0;
     phase_halfperiod         = PHASE_HALFPERIOD;
@@ -256,6 +248,7 @@ static void IRAM_ATTR zcross_isr_handler(void *arg) {
     add_counter((uint32_t *)p2_counters, ((phase_halfperiod * 2) / 3) + period);
     add_counter((uint32_t *)p3_counters, ((phase_halfperiod * 4) / 3) + period);
 }
+
 
 static void add_counter(uint32_t *counters, uint32_t counter) {
     int i;

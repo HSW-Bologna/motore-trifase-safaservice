@@ -13,3 +13,6 @@
 [submodule "components/liblightmodbus-esp"]
 	path = components/liblightmodbus-esp
 	url = https://github.com/Jacajack/liblightmodbus-esp.git
+[submodule "components/easyconnect-device"]
+	path = components/easyconnect-device
+	url = https://github.com/HSW-Bologna/easyconnect-device.git

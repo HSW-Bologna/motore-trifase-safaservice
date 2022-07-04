@@ -1,13 +1,12 @@
 #include "controllo_digitale.h"
 #include "driver/gpio.h"
 #include "driver/adc_common.h"
-#include "freertos/projdefs.h"
 #include "hal/adc_types.h"
 #include "hal/gpio_types.h"
 #include "hardwareprofile.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
-#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "driver/gpio.h"
 #include "driver/adc.h"
 #include "gel/debounce/debounce.h"
@@ -27,6 +26,8 @@ static bool adc_calibration_init(void);
 
 static const char *TAG = "Digital control";
 
+static SemaphoreHandle_t sem = NULL;
+
 static uint16_t speeds[NUM_READINGS];
 static size_t   avarage_index = 0;
 static size_t   first_loop    = 1;
@@ -45,13 +46,14 @@ static void controllo_digitale_read_signal_on(void *arg) {     // da fare period
 
 static void controllo_digitale_read_analog_speed(void *arg) {     // da fare periodicamente
     (void)arg;
-    uint16_t speed = adc1_get_raw(ANALOG_SPEED);
+    uint16_t speed        = adc1_get_raw(ANALOG_SPEED);
     speeds[avarage_index] = speed;
     if (avarage_index == NUM_READINGS - 1) {
         first_loop = 0;
     }
     avarage_index = (avarage_index + 1) % NUM_READINGS;
 }
+
 
 void controllo_digitale_init(void) {
     gpio_config_t io_conf_input = {
@@ -72,6 +74,10 @@ void controllo_digitale_init(void) {
     adc1_config_channel_atten(ADC1_CHANNEL_4, ADC_ATTEN_DB_11);
 
     debounce_filter_init(&filter);
+
+    static StaticSemaphore_t semaphore_buffer;
+    sem = xSemaphoreCreateMutexStatic(&semaphore_buffer);
+
     timer_read_on =
         xTimerCreate("read_on", pdMS_TO_TICKS(READ_ON_PERIOD), pdTRUE, NULL, controllo_digitale_read_signal_on);
     timer_read_speed = xTimerCreate("read speed", pdMS_TO_TICKS(READ_SPEED_PERIOD), pdTRUE, NULL,
@@ -81,15 +87,21 @@ void controllo_digitale_init(void) {
 }
 
 
-int controllo_digitale_get_signal_on(void) {
-    return !debounce_value(&filter);
+uint8_t controllo_digitale_get_signal_on(void) {
+    xSemaphoreTake(sem, portMAX_DELAY);
+    uint8_t res = !debounce_value(&filter);
+    xSemaphoreGive(sem);
+    return res;
 }
+
 
 uint16_t controllo_digitale_get_analog_speed(void) {
     size_t   i;
     uint16_t res;
-    uint32_t speed_sum    = 0;
-    size_t   num_readings = first_loop ? avarage_index : NUM_READINGS;
+    uint32_t speed_sum = 0;
+
+    xSemaphoreTake(sem, portMAX_DELAY);
+    size_t num_readings = first_loop ? avarage_index : NUM_READINGS;
     for (i = 0; i < num_readings; i++) {
         speed_sum += speeds[i];
     }
@@ -98,8 +110,10 @@ uint16_t controllo_digitale_get_analog_speed(void) {
     } else {
         res = (uint16_t)(speed_sum / num_readings);
     }
+    xSemaphoreGive(sem);
     return res;
 }
+
 
 int controllo_digitale_get_perc_speed(void) {
     int value = (int)controllo_digitale_get_analog_speed() - MIN_ANALOG;

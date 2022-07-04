@@ -5,5 +5,7 @@
 
 
 void controller_init(model_t *model);
+void controller_manage(model_t *pmodel);
+
 
 #endif

@@ -5,7 +5,8 @@
 #include <stdlib.h>
 
 
-void heartbeat_init(size_t period_ms);
+void heartbeat_init(void);
+void heartbeat_faster(uint8_t faster);
 
 
 #endif
