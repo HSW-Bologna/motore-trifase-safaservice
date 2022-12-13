@@ -1,3 +1,4 @@
+#include <string.h>
 #include "minion.h"
 #include "../components/liblightmodbus-esp/src/esp.config.h"
 #include "esp_err.h"
@@ -22,7 +23,7 @@
 
 #define REG_COUNT 6
 
-#define HOLDING_REGISTER_SPEED_STEP 4
+#define HOLDING_REGISTER_SPEED_STEP EASYCONNECT_HOLDING_REGISTER_CUSTOM_START
 
 #define COIL_MOTOR_STATE 0
 
@@ -32,6 +33,8 @@ static ModbusError           register_callback(const ModbusSlave *status, const 
 static ModbusError           exception_callback(const ModbusSlave *minion, uint8_t function, ModbusExceptionCode code);
 static LIGHTMODBUS_RET_ERROR initialization_function(ModbusSlave *minion, uint8_t function, const uint8_t *requestPDU,
                                                      uint8_t requestLength);
+static LIGHTMODBUS_RET_ERROR set_class_output(ModbusSlave *minion, uint8_t function, const uint8_t *requestPDU,
+                                              uint8_t requestLength);
 
 
 static const ModbusSlaveFunctionHandler custom_functions[] = {
@@ -65,8 +68,8 @@ static const ModbusSlaveFunctionHandler custom_functions[] = {
 
     {EASYCONNECT_FUNCTION_CODE_CONFIG_ADDRESS, easyconnect_set_address_function},
     {EASYCONNECT_FUNCTION_CODE_RANDOM_SERIAL_NUMBER, easyconnect_send_address_function},
-    {EASYCONNECT_FUNCTION_CODE_NETWORK_INIZIALIZATION, initialization_function},
-    {EASYCONNECT_FUNCTION_CODE_SET_CLASS_OUTPUT, easyconnect_set_class_output},
+    {EASYCONNECT_FUNCTION_CODE_NETWORK_INITIALIZATION, initialization_function},
+    {EASYCONNECT_FUNCTION_CODE_SET_CLASS_OUTPUT, set_class_output},
 
     // Guard - prevents 0 array size
     {0, NULL},
@@ -157,10 +160,6 @@ static ModbusError register_callback(const ModbusSlave *status, const ModbusRegi
                             break;
 
                         case EASYCONNECT_HOLDING_REGISTER_CLASS: {
-                            uint8_t mode = (args->value & 0xFF00) >> 8;
-                            if (mode != DEVICE_MODE_FAN) {
-                                result->exceptionCode = MODBUS_EXCEP_ILLEGAL_VALUE;
-                            }
                             break;
                         }
 
@@ -207,9 +206,27 @@ static ModbusError register_callback(const ModbusSlave *status, const ModbusRegi
                             result->value = context->get_serial_number(context->arg);
                             break;
 
-                        case EASYCONNECT_HOLDING_REGISTER_ALARM:
+                        case EASYCONNECT_HOLDING_REGISTER_ALARMS:
                             result->value = 0;
                             break;
+
+                        case EASYCONNECT_HOLDING_REGISTER_LOGS_COUNTER:
+                            result->value = 0;
+                            break;
+
+                        case EASYCONNECT_HOLDING_REGISTER_LOGS ... EASYCONNECT_HOLDING_REGISTER_MESSAGE_1 - 1: {
+                            result->value = 0;
+                            break;
+                        }
+
+                        case EASYCONNECT_HOLDING_REGISTER_MESSAGE_1 ... EASYCONNECT_HOLDING_REGISTER_MESSAGE_2 - 1: {
+                            char msg[EASYCONNECT_MESSAGE_SIZE + 1] = {0};
+                            // model_get_safety_message(ctx->arg, msg);
+                            strcpy(msg, "Pressure alarm!");     // TODO: configurable message
+                            size_t i      = args->index - EASYCONNECT_HOLDING_REGISTER_MESSAGE_1;
+                            result->value = msg[i * 2] << 8 | msg[i * 2 + 1];
+                            break;
+                        }
 
                         case HOLDING_REGISTER_SPEED_STEP:
                             result->value = model_get_speed_step(context->arg);
@@ -241,10 +258,7 @@ static ModbusError register_callback(const ModbusSlave *status, const ModbusRegi
                             break;
 
                         case EASYCONNECT_HOLDING_REGISTER_CLASS: {
-                            uint8_t mode = (args->value & 0xFF00) >> 8;
-                            if (mode == DEVICE_MODE_FAN) {
-                                context->save_class(context->arg, args->value);
-                            }
+                            context->save_class(context->arg, args->value);
                             break;
                         }
 
@@ -257,9 +271,6 @@ static ModbusError register_callback(const ModbusSlave *status, const ModbusRegi
                                 }
                             }
                             break;
-
-                        case EASYCONNECT_HOLDING_REGISTER_ALARM:
-                            break;
                     }
                     break;
                 }
@@ -267,7 +278,8 @@ static ModbusError register_callback(const ModbusSlave *status, const ModbusRegi
                 case MODBUS_COIL:
                     switch (args->index) {
                         case COIL_MOTOR_STATE:
-                            context->set_output(context->arg, args->value);
+                            motor_control(args->value, model_get_current_speed(context->arg));
+                            model_set_motor_control_override(context->arg, 1);
                             break;
                     }
                     break;
@@ -297,6 +309,25 @@ static LIGHTMODBUS_RET_ERROR initialization_function(ModbusSlave *minion, uint8_
                                                      uint8_t requestLength) {
     easyconnect_interface_t *context = modbusSlaveGetUserPointer(minion);
     model_set_motor_control_override(context->arg, 1);
-    phase_cut_stop();
+    motor_control(0, 0);
+    return MODBUS_NO_ERROR();
+}
+
+
+static LIGHTMODBUS_RET_ERROR set_class_output(ModbusSlave *minion, uint8_t function, const uint8_t *requestPDU,
+                                              uint8_t requestLength) {
+    // Check request length
+    if (requestLength < 3) {
+        return modbusBuildException(minion, function, MODBUS_EXCEP_ILLEGAL_VALUE);
+    }
+
+    easyconnect_interface_t *ctx = modbusSlaveGetUserPointer(minion);
+    uint16_t class               = requestPDU[1] << 8 | requestPDU[2];
+    if (class == ctx->get_class(ctx->arg)) {
+        ESP_LOGI(TAG, "Output %i", requestPDU[3]);
+        motor_control(requestPDU[3], model_get_current_speed(ctx->arg));
+        model_set_motor_control_override(ctx->arg, 1);
+    }
+
     return MODBUS_NO_ERROR();
 }

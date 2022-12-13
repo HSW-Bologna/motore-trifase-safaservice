@@ -11,7 +11,7 @@
 
 #define PERCENTAGE_ADJUSTMENT_STEP   5
 #define PERCENTAGE_ADJUSTMENT_PERIOD 100
-#define MINIMUM_PERCENTAGE           40
+#define MINIMUM_PERCENTAGE           10
 
 
 static void motor_timer(TimerHandle_t timer);
@@ -58,7 +58,6 @@ void motor_set_speed(uint8_t percentage) {
             bootstrap_ts      = get_millis();
             heartbeat_faster(1);
             phase_cut_set_percentage(actual_percentage);
-            ESP_LOGI(TAG, "100%%");
         }
     }
     xSemaphoreGive(sem);

@@ -5,11 +5,14 @@
 #include "peripherals/rs485.h"
 #include "peripherals/controllo_digitale.h"
 #include "peripherals/phase_cut.h"
+#include "esp32c3_commandline.h"
+#include "esp_console.h"
 #include "motor.h"
 #include "minion.h"
 #include "easyconnect_interface.h"
 #include "gel/timer/timecheck.h"
 #include "utils/utils.h"
+#include "app_config.h"
 
 
 
@@ -17,21 +20,19 @@ extern volatile uint32_t calculated_phase_halfperiod;
 extern volatile uint32_t last_phase_halfperiod;
 
 
-static uint16_t get_class(void *args);
-static void     delay_ms(unsigned long ms);
-static void     set_output(void *args, uint8_t value);
+static void delay_ms(unsigned long ms);
+static void console_task(void *args);
 
 
 static const char *TAG = "Controller";
 
 static easyconnect_interface_t context = {
     .save_serial_number = configuration_save_serial_number,
-    .save_class         = configuration_save_group,
+    .save_class         = configuration_save_class,
     .save_address       = configuration_save_address,
     .get_address        = model_get_address,
-    .get_class          = get_class,
+    .get_class          = model_get_class,
     .get_serial_number  = model_get_serial_number,
-    .set_output         = set_output,
     .delay_ms           = delay_ms,
     .write_response     = rs485_write,
 };
@@ -45,6 +46,10 @@ void controller_init(model_t *pmodel) {
     model_check_values(pmodel);
     motor_init();
     minion_init(&context);
+
+    static uint8_t      stack_buffer[APP_CONFIG_BASE_TASK_STACK_SIZE * 6];
+    static StaticTask_t task_buffer;
+    xTaskCreateStatic(console_task, "Console", sizeof(stack_buffer), &context, 1, stack_buffer, &task_buffer);
 }
 
 
@@ -58,7 +63,7 @@ void controller_manage(model_t *pmodel) {
             if (controllo_digitale_get_signal_on()) {
                 unsigned int speed = controllo_digitale_get_perc_speed();
                 motor_set_speed(speed);
-                // ESP_LOGI(TAG, "VELOCITA' %i%% (%i) [%6i  %6i]", speed, phase_cut_get_period(),
+                // printf("VELOCITA' %i%% (%i) [%6i  %6i]\n", speed, phase_cut_get_period(),
                 // calculated_phase_halfperiod, last_phase_halfperiod);
             } else {
                 motor_turn_off();
@@ -70,18 +75,21 @@ void controller_manage(model_t *pmodel) {
 }
 
 
-static uint16_t get_class(void *args) {
-    return (DEVICE_MODE_FAN << 8) | model_get_group(args);
-}
-
-
 static void delay_ms(unsigned long ms) {
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
 
-static void set_output(void *args, uint8_t value) {
-    ESP_LOGI(TAG, "Output %i", value);
-    motor_control(value, model_get_current_speed(args));
-    model_set_motor_control_override(args, 1);
+static void console_task(void *args) {
+    const char              *prompt    = "EC-peripheral> ";
+    easyconnect_interface_t *interface = args;
+
+    esp32c3_commandline_init(interface);
+    esp_console_register_help_command();
+
+    for (;;) {
+        esp32c3_edit_cycle(prompt);
+    }
+
+    vTaskDelete(NULL);
 }

@@ -8,12 +8,11 @@
 
 #define ADDRESS_KEY    "indirizzo"
 #define SERIAL_NUM_KEY "numeroseriale"
-#define GROUP_KEY      "group"
+#define CLASS_KEY      "CLASS"
 
 
 void configuration_init(model_t *pmodel) {
-    uint16_t value       = 0;
-    uint8_t  uint8_value = 0;
+    uint16_t value = 0;
 
     if (storage_load_uint16(&value, ADDRESS_KEY) == 0) {
         model_set_address(pmodel, value);
@@ -21,8 +20,8 @@ void configuration_init(model_t *pmodel) {
     if (storage_load_uint16(&value, SERIAL_NUM_KEY) == 0) {
         model_set_serial_number(pmodel, value);
     }
-    if (storage_load_uint8(&uint8_value, GROUP_KEY) == 0) {
-        model_set_group(pmodel, uint8_value);
+    if (storage_load_uint16(&value, CLASS_KEY) == 0) {
+        model_set_class(pmodel, value, NULL);
     }
 }
 
@@ -39,9 +38,12 @@ void configuration_save_address(void *args, uint16_t value) {
 }
 
 
-void configuration_save_group(void *args, uint16_t value) {
-    // This device has a fixed device model
-    uint8_t group = value & 0xFF;
-    storage_save_uint8(&group, GROUP_KEY);
-    model_set_group(args, value);
+int configuration_save_class(void *args, uint16_t value) {
+    uint16_t corrected;
+    if (model_set_class(args, value, &corrected) == 0) {
+        storage_save_uint16(&corrected, CLASS_KEY);
+        return 0;
+    } else {
+        return -1;
+    }
 }

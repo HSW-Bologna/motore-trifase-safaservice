@@ -25,7 +25,7 @@ static void heartbeat_timer(TimerHandle_t timer) {
     gpio_set_level(IO_LED_RUN, blink);
     blink = !blink;
     xTimerChangePeriod(timer,
-                       pdMS_TO_TICKS(blink ? 50 : (pvTimerGetTimerID(timer) > 0 ? FASTER_PERIOD : NORMAL_PERIOD)),
+                       pdMS_TO_TICKS(blink ? 50 : ((uint8_t)(uintptr_t)pvTimerGetTimerID(timer) > 0 ? FASTER_PERIOD : NORMAL_PERIOD)),
                        portMAX_DELAY);
 }
 

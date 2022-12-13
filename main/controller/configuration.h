@@ -9,7 +9,7 @@
 void configuration_init(model_t *pmodel);
 void configuration_save_serial_number(void *args, uint16_t value);
 void configuration_save_address(void *args, uint16_t value);
-void configuration_save_group(void *args, uint16_t value);
+int  configuration_save_class(void *args, uint16_t value);
 
 
 #endif

@@ -9,10 +9,8 @@
 
 #define EASYCONNECT_DEFAULT_MINION_ADDRESS       1
 #define EASYCONNECT_DEFAULT_MINION_SERIAL_NUMBER 2
-#define EASYCONNECT_DEFAULT_MINION_MODEL         0x0101
-#define EASYCONNECT_DEFAULT_FEEDBACK_LEVEL       0x0
-#define EASYCONNECT_DEFAULT_ACTIVATE_ATTEMPTS    1
-#define EASYCONNECT_DEFAULT_FEEDBACK_DELAY       4
+
+#define EASYCONNECT_DEFAULT_DEVICE_CLASS CLASS(DEVICE_MODE_SIPHONING_FAN, DEVICE_GROUP_1)
 
 #define NUM_SPEED_STEPS 5
 
@@ -75,7 +73,7 @@ typedef struct {
 
     uint16_t address;
     uint16_t serial_number;
-    uint8_t  group;
+    uint16_t class;
 
     uint8_t motor_control_override;
 
@@ -84,14 +82,15 @@ typedef struct {
 } model_t;
 
 
-void    model_init(model_t *model);
-void    model_check_values(model_t *pmodel);
-uint8_t model_get_configured_speed_step(model_t *pmodel, size_t step);
-uint8_t model_get_current_speed(model_t *pmodel);
+void     model_init(model_t *model);
+void     model_check_values(model_t *pmodel);
+uint8_t  model_get_configured_speed_step(model_t *pmodel, size_t step);
+uint8_t  model_get_current_speed(model_t *pmodel);
+uint16_t model_get_class(void *arg);
+int      model_set_class(void *arg, uint16_t class, uint16_t *out_class);
 
 GETTERNSETTER_GENERIC(address, address);
 GETTERNSETTER_GENERIC(serial_number, serial_number);
-GETTERNSETTER_GENERIC(group, group);
 GETTERNSETTER(speed_step, speed_step);
 GETTERNSETTER_UNSAFE(motor_control_override, motor_control_override);
 
