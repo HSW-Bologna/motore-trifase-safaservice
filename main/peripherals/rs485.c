@@ -3,7 +3,7 @@
 #include "hardwareprofile.h"
 
 
-#define MB_PORTNUM 1
+#define MB_PORTNUM UART_NUM_1
 // Timeout threshold for UART = number of symbols (~10 tics) with unchanged
 // state on receive pin
 #define ECHO_READ_TOUT (3)     // 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
@@ -18,13 +18,15 @@ void rs485_init(void) {
         .stop_bits           = UART_STOP_BITS_1,
         .flow_ctrl           = UART_HW_FLOWCTRL_DISABLE,
         .rx_flow_ctrl_thresh = 122,
+        .source_clk          = UART_SCLK_DEFAULT,
     };
+
+    ESP_ERROR_CHECK(uart_driver_install(MB_PORTNUM, 256, 256, 10, NULL, 0));
 
     // Configure UART parameters
     ESP_ERROR_CHECK(uart_param_config(MB_PORTNUM, &uart_config));
 
     ESP_ERROR_CHECK(uart_set_pin(MB_PORTNUM, MB_UART_TXD, MB_UART_RXD, MB_DERE, -1));
-    ESP_ERROR_CHECK(uart_driver_install(MB_PORTNUM, 256, 256, 10, NULL, 0));
     ESP_ERROR_CHECK(uart_set_mode(MB_PORTNUM, UART_MODE_RS485_HALF_DUPLEX));
     ESP_ERROR_CHECK(uart_set_rx_timeout(MB_PORTNUM, ECHO_READ_TOUT));
 }

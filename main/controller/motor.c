@@ -1,130 +1,89 @@
+#include <driver/gpio.h>
+#include <driver/ledc.h>
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/timers.h"
 #include "esp_log.h"
-#include "peripherals/phase_cut.h"
 #include "peripherals/heartbeat.h"
+#include "peripherals/hardwareprofile.h"
 #include "motor.h"
+#include "safety.h"
 #include "utils/utils.h"
 #include "gel/timer/timecheck.h"
+#include "model/model.h"
 
 
-#define PERCENTAGE_ADJUSTMENT_STEP   5
-#define PERCENTAGE_ADJUSTMENT_PERIOD 100
-#define MINIMUM_PERCENTAGE           10
+#define PWM_MODE    LEDC_LOW_SPEED_MODE
+#define PWM_CHANNEL LEDC_CHANNEL_0
+#define PWM_TIMER   LEDC_TIMER_1
 
 
-static void motor_timer(TimerHandle_t timer);
+static const char *TAG = "Motor";
 
 
-static const char       *TAG                  = "Motor";
-static TimerHandle_t     timer                = NULL;
-static SemaphoreHandle_t sem                  = NULL;
-static uint8_t           actual_percentage    = MINIMUM_PERCENTAGE;
-static uint8_t           objective_percentage = MINIMUM_PERCENTAGE;
-static uint8_t           motor_on             = 0;
-static uint8_t           bootstrap            = 0;
-static unsigned long     bootstrap_ts         = 0;
+void motor_init(model_t *pmodel) {
+    gpio_config_t config = {
+        .intr_type    = GPIO_INTR_DISABLE,
+        .mode         = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = BIT64(HAP_OUTPUT),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&config));
 
+    ledc_timer_config_t ledc_timer = {
+        .duty_resolution = LEDC_TIMER_10_BIT,     // resolution of PWM duty
+        .freq_hz         = 1000,                  // frequency of PWM signal
+        .speed_mode      = PWM_MODE,              // timer mode
+        .timer_num       = PWM_TIMER,             // timer index
+        .clk_cfg         = LEDC_AUTO_CLK,         // Auto select the source clock
+    };
+    // Set configuration of timer0 for high speed channels
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
-void motor_init(void) {
-    static StaticSemaphore_t semaphore_buffer;
-    sem = xSemaphoreCreateMutexStatic(&semaphore_buffer);
+    ledc_channel_config_t ledc_channel = {
+        .channel             = PWM_CHANNEL,
+        .duty                = 0,
+        .gpio_num            = HAP_PWM,
+        .speed_mode          = PWM_MODE,
+        .hpoint              = 0,
+        .timer_sel           = PWM_TIMER,
+        .flags.output_invert = 0,
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
 
-    static StaticTimer_t timer_buffer;
-    timer =
-        xTimerCreateStatic(TAG, pdMS_TO_TICKS(PERCENTAGE_ADJUSTMENT_PERIOD), pdTRUE, NULL, motor_timer, &timer_buffer);
-    xTimerStart(timer, portMAX_DELAY);
-
-    motor_turn_off();
+    motor_turn_off(pmodel);
+    ESP_LOGI(TAG, "Initialized");
 }
 
 
-void motor_set_speed(uint8_t percentage) {
-    if (percentage < MINIMUM_PERCENTAGE) {
-        percentage = MINIMUM_PERCENTAGE;
-    } else if (percentage > 100) {
+void motor_set_speed(model_t *pmodel, uint8_t percentage) {
+    if (percentage > 100) {
         percentage = 100;
     }
 
-    xSemaphoreTake(sem, portMAX_DELAY);
-    // If the setup is always the same do nothing
-    if (!motor_on || objective_percentage != percentage) {
-        objective_percentage = percentage;
-        if (!motor_on) {
-            actual_percentage = 100;
-            bootstrap         = 1;
-            motor_on          = 1;
-            bootstrap_ts      = get_millis();
-            heartbeat_faster(1);
-            phase_cut_set_percentage(actual_percentage);
-        }
-    }
-    xSemaphoreGive(sem);
+    model_set_speed_percentage(pmodel, percentage);
+
+    uint32_t duty = (percentage * 1024) / 100;
+    ESP_LOGI(TAG, "Duty to %lu", duty);
+    ledc_set_duty(PWM_MODE, PWM_CHANNEL, duty);
+    ledc_update_duty(PWM_MODE, PWM_CHANNEL);
 }
 
 
-void motor_turn_off(void) {
-    xSemaphoreTake(sem, portMAX_DELAY);
-    motor_on = 0;
-    xSemaphoreGive(sem);
-    heartbeat_faster(0);
-    phase_cut_set_percentage(0);
+void motor_turn_off(model_t *pmodel) {
+    gpio_set_level(HAP_OUTPUT, 0);
+    motor_set_speed(pmodel, 0);
 }
 
 
-void motor_control(uint8_t enable, uint8_t percentage) {
-    if (enable) {
+void motor_control(model_t *pmodel, uint8_t enable, uint8_t percentage) {
+    model_set_motor_active(pmodel, enable);
+    motor_set_speed(pmodel, percentage);
+
+    if (enable && safety_ok()) {
         ESP_LOGI(TAG, "Setting speed to %i%%", percentage);
-        motor_set_speed(percentage);
+        gpio_set_level(HAP_OUTPUT, 1);
     } else {
-        motor_turn_off();
-    }
-}
-
-
-uint8_t motor_get_state(void) {
-    xSemaphoreTake(sem, portMAX_DELAY);
-    uint8_t res = motor_on;
-    xSemaphoreGive(sem);
-    return res;
-}
-
-
-static void motor_timer(TimerHandle_t timer) {
-    uint8_t change     = 0;
-    uint8_t percentage = 0;
-
-    xSemaphoreTake(sem, portMAX_DELAY);
-    if (bootstrap) {
-        if (is_expired(bootstrap_ts, get_millis(), 1000UL)) {
-            bootstrap = 0;
-        }
-    } else if (motor_on) {
-        if (objective_percentage > actual_percentage) {
-            if (objective_percentage > actual_percentage + PERCENTAGE_ADJUSTMENT_STEP) {
-                actual_percentage += PERCENTAGE_ADJUSTMENT_STEP;
-                change = 1;
-            } else {
-                actual_percentage = objective_percentage;
-                change            = 1;
-            }
-        } else if (objective_percentage < actual_percentage) {
-            if ((int8_t)objective_percentage < (int8_t)actual_percentage - (int8_t)PERCENTAGE_ADJUSTMENT_STEP) {
-                actual_percentage -= PERCENTAGE_ADJUSTMENT_STEP;
-                change = 1;
-            } else {
-                actual_percentage = objective_percentage;
-                change            = 1;
-            }
-        }
-
-        percentage = actual_percentage;
-    }
-    xSemaphoreGive(sem);
-
-    if (change) {
-        ESP_LOGI(TAG, "speed %i%%", percentage);
-        phase_cut_set_percentage(percentage);
+        ESP_LOGI(TAG, "Turning motor off");
+        motor_turn_off(pmodel);
     }
 }

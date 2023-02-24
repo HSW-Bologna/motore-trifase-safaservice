@@ -5,12 +5,13 @@
 #include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "easyconnect_interface.h"
 
 
 #define EASYCONNECT_DEFAULT_MINION_ADDRESS       1
 #define EASYCONNECT_DEFAULT_MINION_SERIAL_NUMBER 2
 
-#define EASYCONNECT_DEFAULT_DEVICE_CLASS CLASS(DEVICE_MODE_SIPHONING_FAN, DEVICE_GROUP_1)
+#define EASYCONNECT_DEFAULT_DEVICE_CLASS CLASS(DEVICE_MODE_FAN, DEVICE_GROUP_1)
 
 #define NUM_SPEED_STEPS 5
 
@@ -75,23 +76,24 @@ typedef struct {
     uint16_t serial_number;
     uint16_t class;
 
-    uint8_t motor_control_override;
-
-    uint8_t speed_steps[NUM_SPEED_STEPS];
-    size_t  speed_step;
+    char    safety_message[EASYCONNECT_MESSAGE_SIZE + 1];
+    uint8_t missing_heartbeat;
+    uint8_t motor_active;
+    uint8_t speed_percentage;
 } model_t;
 
 
 void     model_init(model_t *model);
 void     model_check_values(model_t *pmodel);
-uint8_t  model_get_configured_speed_step(model_t *pmodel, size_t step);
-uint8_t  model_get_current_speed(model_t *pmodel);
 uint16_t model_get_class(void *arg);
 int      model_set_class(void *arg, uint16_t class, uint16_t *out_class);
+void     model_get_safety_message(void *args, char *string);
+void     model_set_safety_message(model_t *pmodel, const char *string);
 
 GETTERNSETTER_GENERIC(address, address);
 GETTERNSETTER_GENERIC(serial_number, serial_number);
-GETTERNSETTER(speed_step, speed_step);
-GETTERNSETTER_UNSAFE(motor_control_override, motor_control_override);
+GETTERNSETTER_GENERIC(missing_heartbeat, missing_heartbeat);
+GETTERNSETTER(speed_percentage, speed_percentage);
+GETTERNSETTER(motor_active, motor_active);
 
 #endif

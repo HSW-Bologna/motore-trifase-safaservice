@@ -13,9 +13,8 @@
 #include "peripherals/system.h"
 #include "peripherals/rs485.h"
 #include "peripherals/heartbeat.h"
-#include "peripherals/phase_cut.h"
-#include "peripherals/controllo_digitale.h"
 #include "peripherals/storage.h"
+#include "peripherals/digin.h"
 
 
 static const char *TAG = "Main";
@@ -24,10 +23,9 @@ void app_main(void) {
     model_t model;
 
     system_random_init();
+    digin_init();
     rs485_init();
     heartbeat_init();
-    phase_cut_init();
-    controllo_digitale_init();
     storage_init();
 
     model_init(&model);

@@ -10,18 +10,18 @@ static uint8_t valid_mode(uint16_t mode);
 
 void model_init(model_t *pmodel) {
     assert(pmodel != NULL);
-    static const uint8_t default_speed_steps[NUM_SPEED_STEPS] = {10, 25, 40, 55, 100};
-
     pmodel->sem = xSemaphoreCreateMutexStatic(&pmodel->semaphore_buffer);
 
     pmodel->address       = EASYCONNECT_DEFAULT_MINION_ADDRESS;
     pmodel->serial_number = EASYCONNECT_DEFAULT_MINION_SERIAL_NUMBER;
 
-    pmodel->motor_control_override = 0;
-    pmodel->class                  = EASYCONNECT_DEFAULT_DEVICE_CLASS;
+    pmodel->class = EASYCONNECT_DEFAULT_DEVICE_CLASS;
 
-    memcpy(pmodel->speed_steps, default_speed_steps, sizeof(pmodel->speed_steps));
-    pmodel->speed_step = 0;
+    pmodel->motor_active      = 0;
+    pmodel->speed_percentage  = 0;
+    pmodel->missing_heartbeat = 0;
+
+    memset(pmodel->safety_message, 0, sizeof(pmodel->safety_message));
 }
 
 
@@ -29,24 +29,9 @@ void model_check_values(model_t *pmodel) {
     assert(pmodel != NULL);
 
     uint16_t class = model_get_class(pmodel);
-    if (class != CLASS(DEVICE_MODE_SIPHONING_FAN, DEVICE_GROUP_1) &&
-        class != CLASS(DEVICE_MODE_IMMISSION_FAN, DEVICE_GROUP_1)) {
+    if (class != CLASS(DEVICE_MODE_FAN, DEVICE_GROUP_1) && class != CLASS(DEVICE_MODE_FAN, DEVICE_GROUP_2)) {
         model_set_class(pmodel, EASYCONNECT_DEFAULT_DEVICE_CLASS, NULL);
     }
-}
-
-
-uint8_t model_get_configured_speed_step(model_t *pmodel, size_t step) {
-    assert(pmodel != NULL);
-    assert(step < NUM_SPEED_STEPS);
-
-    return pmodel->speed_steps[step];
-}
-
-
-uint8_t model_get_current_speed(model_t *pmodel) {
-    assert(pmodel != NULL);
-    return model_get_configured_speed_step(pmodel, model_get_speed_step(pmodel));
 }
 
 
@@ -83,10 +68,25 @@ int model_set_class(void *arg, uint16_t class, uint16_t *out_class) {
 }
 
 
+void model_get_safety_message(void *args, char *string) {
+    model_t *pmodel = args;
+    xSemaphoreTake(pmodel->sem, portMAX_DELAY);
+    strcpy(string, pmodel->safety_message);
+    xSemaphoreGive(pmodel->sem);
+}
+
+
+void model_set_safety_message(model_t *pmodel, const char *string) {
+    xSemaphoreTake(pmodel->sem, portMAX_DELAY);
+    snprintf(pmodel->safety_message, sizeof(pmodel->safety_message), "%s", string);
+    xSemaphoreGive(pmodel->sem);
+}
+
+
+
 static uint8_t valid_mode(uint16_t mode) {
     switch (mode) {
-        case DEVICE_MODE_IMMISSION_FAN:
-        case DEVICE_MODE_SIPHONING_FAN:
+        case DEVICE_MODE_FAN:
             return 1;
         default:
             return 0;

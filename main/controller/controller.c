@@ -3,17 +3,19 @@
 #include "model/model.h"
 #include "configuration.h"
 #include "peripherals/rs485.h"
-#include "peripherals/controllo_digitale.h"
-#include "peripherals/phase_cut.h"
 #include "esp32c3_commandline.h"
 #include "esp_console.h"
 #include "motor.h"
 #include "minion.h"
 #include "easyconnect_interface.h"
+#include "device_commands.h"
 #include "gel/timer/timecheck.h"
 #include "utils/utils.h"
 #include "app_config.h"
-
+#include "safety.h"
+#include "leds_activity.h"
+#include "leds_communication.h"
+#include "peripherals/heartbeat.h"
 
 
 extern volatile uint32_t calculated_phase_halfperiod;
@@ -42,9 +44,9 @@ void controller_init(model_t *pmodel) {
     context.arg = pmodel;
 
     ESP_LOGD(TAG, "Initializing controller");
+    motor_init(pmodel);
     configuration_init(pmodel);
     model_check_values(pmodel);
-    motor_init();
     minion_init(&context);
 
     static uint8_t      stack_buffer[APP_CONFIG_BASE_TASK_STACK_SIZE * 6];
@@ -58,20 +60,18 @@ void controller_manage(model_t *pmodel) {
 
     minion_manage();
 
-    if (is_expired(ms100_ts, get_millis(), 100UL)) {
-        if (!model_get_motor_control_override(pmodel)) {
-            if (controllo_digitale_get_signal_on()) {
-                unsigned int speed = controllo_digitale_get_perc_speed();
-                motor_set_speed(speed);
-                // printf("VELOCITA' %i%% (%i) [%6i  %6i]\n", speed, phase_cut_get_period(),
-                // calculated_phase_halfperiod, last_phase_halfperiod);
-            } else {
-                motor_turn_off();
-            }
+    if (is_expired(ms100_ts, get_millis(), 50UL)) {
+        if (!safety_ok() || model_get_missing_heartbeat(pmodel)) {
+            motor_turn_off(pmodel);
+        } else if (model_get_motor_active(pmodel)) {
+            motor_control(pmodel, 1, model_get_speed_percentage(pmodel));
         }
 
         ms100_ts = get_millis();
     }
+
+    heartbeat_update_green(leds_communication_manage(get_millis(), !model_get_missing_heartbeat(pmodel)));
+    heartbeat_update_red(leds_activity_manage(get_millis(), 1, safety_ok(), model_get_motor_active(pmodel)));
 }
 
 
@@ -85,6 +85,7 @@ static void console_task(void *args) {
     easyconnect_interface_t *interface = args;
 
     esp32c3_commandline_init(interface);
+    device_commands_register(interface->arg);
     esp_console_register_help_command();
 
     for (;;) {
