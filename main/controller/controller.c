@@ -63,15 +63,15 @@ void controller_manage(model_t *pmodel) {
     if (is_expired(ms100_ts, get_millis(), 50UL)) {
         if (!safety_ok() || model_get_missing_heartbeat(pmodel)) {
             motor_turn_off(pmodel);
-        } else if (model_get_motor_active(pmodel)) {
-            motor_control(pmodel, 1, model_get_speed_percentage(pmodel));
+        } else {
+            motor_refresh(pmodel);
         }
 
         ms100_ts = get_millis();
     }
 
     heartbeat_update_green(leds_communication_manage(get_millis(), !model_get_missing_heartbeat(pmodel)));
-    heartbeat_update_red(leds_activity_manage(get_millis(), 1, safety_ok(), model_get_motor_active(pmodel)));
+    heartbeat_update_red(leds_activity_manage(get_millis(), model_get_motor_active(pmodel), 1, safety_ok()));
 }
 
 

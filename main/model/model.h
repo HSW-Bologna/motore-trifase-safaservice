@@ -73,7 +73,7 @@ typedef struct {
     SemaphoreHandle_t sem;
 
     uint16_t address;
-    uint16_t serial_number;
+    uint32_t serial_number;
     uint16_t class;
 
     char    safety_message[EASYCONNECT_MESSAGE_SIZE + 1];

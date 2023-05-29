@@ -16,6 +16,9 @@
 #define PWM_TIMER   LEDC_TIMER_1
 
 
+static void set_duty_percentage(uint8_t percentage);
+
+
 static const char *TAG = "Motor";
 
 
@@ -61,29 +64,43 @@ void motor_set_speed(model_t *pmodel, uint8_t percentage) {
     }
 
     model_set_speed_percentage(pmodel, percentage);
-
-    uint32_t duty = (percentage * 1024) / 100;
-    ESP_LOGI(TAG, "Duty to %lu", duty);
-    ledc_set_duty(PWM_MODE, PWM_CHANNEL, duty);
-    ledc_update_duty(PWM_MODE, PWM_CHANNEL);
+    set_duty_percentage(percentage);
 }
 
 
 void motor_turn_off(model_t *pmodel) {
+    model_set_motor_active(pmodel, 0);
     gpio_set_level(HAP_OUTPUT, 0);
-    motor_set_speed(pmodel, 0);
+    set_duty_percentage(0);
 }
 
 
-void motor_control(model_t *pmodel, uint8_t enable, uint8_t percentage) {
-    model_set_motor_active(pmodel, enable);
-    motor_set_speed(pmodel, percentage);
+void motor_turn_on(model_t *pmodel) {
+    model_set_motor_active(pmodel, 1);
+    if (safety_ok()) {
+        gpio_set_level(HAP_OUTPUT, 1);
+        set_duty_percentage(model_get_speed_percentage(pmodel));
+    }
+}
 
-    if (enable && safety_ok()) {
-        ESP_LOGI(TAG, "Setting speed to %i%%", percentage);
+
+void motor_refresh(model_t *pmodel) {
+    if (model_get_motor_active(pmodel)) {
+        set_duty_percentage(model_get_speed_percentage(pmodel));
         gpio_set_level(HAP_OUTPUT, 1);
     } else {
-        ESP_LOGI(TAG, "Turning motor off");
-        motor_turn_off(pmodel);
+        set_duty_percentage(0);
+        gpio_set_level(HAP_OUTPUT, 0);
     }
+}
+
+
+static void set_duty_percentage(uint8_t percentage) {
+    if (percentage > 100) {
+        percentage = 100;
+    }
+
+    uint32_t duty = (percentage * 1024) / 100;
+    ledc_set_duty(PWM_MODE, PWM_CHANNEL, duty);
+    ledc_update_duty(PWM_MODE, PWM_CHANNEL);
 }
