@@ -29,7 +29,8 @@
 #define HOLDING_REGISTER_SAFETY_MESSAGE   EASYCONNECT_HOLDING_REGISTER_MESSAGE_1
 #define HOLDING_REGISTER_FEEDBACK_MESSAGE (HOLDING_REGISTER_SAFETY_MESSAGE + EASYCONNECT_MESSAGE_NUM_REGISTERS)
 
-#define COIL_MOTOR_STATE 0
+#define COIL_MOTOR_STATE   0
+#define COIL_SAFETY_BYPASS 1
 
 
 static ModbusError           register_callback(const ModbusSlave *status, const ModbusRegisterCallbackArgs *args,
@@ -335,6 +336,10 @@ static ModbusError register_callback(const ModbusSlave *status, const ModbusRegi
                                 motor_turn_off(context->arg);
                             }
                             break;
+
+                        case COIL_SAFETY_BYPASS:
+                            model_set_safety_bypass(context->arg, args->value);
+                            break;
                     }
                     break;
 
@@ -376,6 +381,8 @@ static LIGHTMODBUS_RET_ERROR set_class_output(ModbusSlave *minion, uint8_t funct
 
     easyconnect_interface_t *ctx = modbusSlaveGetUserPointer(minion);
     uint16_t class               = requestPDU[1] << 8 | requestPDU[2];
+    uint8_t safety_bypass        = requestPDU[4];
+    model_set_safety_bypass(ctx->arg, safety_bypass);
     if (class == ctx->get_class(ctx->arg)) {
         ESP_LOGI(TAG, "Output %i, percentage %i", requestPDU[3], model_get_speed_percentage(ctx->arg));
         if (requestPDU[3]) {

@@ -61,7 +61,7 @@ void controller_manage(model_t *pmodel) {
     minion_manage();
 
     if (is_expired(ms100_ts, get_millis(), 50UL)) {
-        if (!safety_ok() || model_get_missing_heartbeat(pmodel)) {
+        if ((!safety_ok() && !model_get_safety_bypass(pmodel)) || model_get_missing_heartbeat(pmodel)) {
             motor_turn_off(pmodel);
         } else {
             motor_refresh(pmodel);

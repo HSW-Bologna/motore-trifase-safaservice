@@ -80,6 +80,7 @@ typedef struct {
     uint8_t missing_heartbeat;
     uint8_t motor_active;
     uint8_t speed_percentage;
+    uint8_t safety_bypass;
 } model_t;
 
 
@@ -95,5 +96,6 @@ GETTERNSETTER_GENERIC(serial_number, serial_number);
 GETTERNSETTER_GENERIC(missing_heartbeat, missing_heartbeat);
 GETTERNSETTER(speed_percentage, speed_percentage);
 GETTERNSETTER(motor_active, motor_active);
+GETTERNSETTER(safety_bypass, safety_bypass);
 
 #endif

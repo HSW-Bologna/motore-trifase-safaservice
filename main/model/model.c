@@ -20,6 +20,7 @@ void model_init(model_t *pmodel) {
     pmodel->motor_active      = 0;
     pmodel->speed_percentage  = 0;
     pmodel->missing_heartbeat = 0;
+    pmodel->safety_bypass     = 0;
 
     memset(pmodel->safety_message, 0, sizeof(pmodel->safety_message));
 }

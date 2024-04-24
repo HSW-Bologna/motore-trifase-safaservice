@@ -77,7 +77,7 @@ void motor_turn_off(model_t *pmodel) {
 
 void motor_turn_on(model_t *pmodel) {
     model_set_motor_active(pmodel, 1);
-    if (safety_ok()) {
+    if (safety_ok() || model_get_safety_bypass(pmodel)) {
         gpio_set_level(HAP_OUTPUT, 1);
         set_duty_percentage(model_get_speed_percentage(pmodel));
     }
